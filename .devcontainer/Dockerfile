@@ -10,7 +10,7 @@ RUN if [ "${NODE_VERSION}" != "none" ]; then su vscode -c "umask 0002 && . /usr/
 
 # [Optional] Uncomment this section to install additional OS packages.
 RUN apt-get update && export DEBIAN_FRONTEND=noninteractive \
-    && apt-get -y install --no-install-recommends libraw-dev
+    && apt-get -y install --no-install-recommends exiftool libraw-dev
 
 # Install rawpy
 RUN git clone https://github.com/letmaik/rawpy --branch v0.17.0 --depth 1 /tmp/rawpy \
