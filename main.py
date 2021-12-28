@@ -371,6 +371,62 @@ def process_image(metadata: ImageMetadata, group_focus_data: List[FocusData]) ->
     )
 
 
+def process_group(group: Iterator[ImageMetadata]):
+    start_time = time.perf_counter()
+
+    group_list = list(group)
+    group_focus_data = [m.focus_data for m in group_list]
+
+    scored_items = [
+        process_image(metadata, group_focus_data) for metadata in group_list
+    ]
+
+    max_mean = max([
+        max(item.score.wide_mean, item.score.focus_point_mean) for item in scored_items
+    ])
+
+    rated: List[RatedItem] = []
+    for item in scored_items:
+        rating = 0
+        mean = max(item.score.focus_point_mean,
+                   item.score.wide_mean)
+        if mean >= 10:
+            if item.metadata.focus_data.face_tracking:
+                rating += 1
+            if mean >= 40:
+                rating += 1
+            if mean == max_mean:
+                rating += 1
+            if mean >= max_mean * 0.95:
+                rating += 1
+
+        rated.append(
+            RatedItem(
+                metadata=item.metadata,
+                score=item.score,
+                rating=rating,
+            )
+        )
+
+    rated = sorted(rated,
+                   key=lambda item: (item.rating, max(
+                       item.score.focus_point_mean, item.score.wide_mean)),
+                   reverse=True)
+
+    for item in rated:
+        print(item.metadata.source_file, item.metadata.focus_data, item.score, item.rating,
+              file=sys.stderr)
+
+    if True:
+        for item in rated:
+            write_metadata(item.metadata.source_file,
+                           rating=item.rating)
+
+    print([item.source_file for item in group_list],
+          "%.1f sec" % (time.perf_counter() - start_time),
+          file=sys.stderr)
+
+
 def main():
     data = load_metadata(sys.argv[1:])
 
@@ -378,60 +434,8 @@ def main():
     groups = split_groups(groups, lambda d: group_by(d, similar_date))
     groups = split_groups(groups, lambda d: group_by(d, similar_histogram))
 
-    for group in groups:
-        start_time = time.perf_counter()
-
-        group = list(group)
-        print([item.source_file for item in group], file=sys.stderr)
-
-        group_focus_data = [m.focus_data for m in group]
-
-        scored_items: List[ScoredItem] = joblib.Parallel(n_jobs=-1)(
-            joblib.delayed(process_image)(metadata, group_focus_data) for metadata in group)
-
-        max_mean = max([max(item.score.wide_mean, item.score.focus_point_mean)
-                       for item in scored_items])
-
-        rated: List[RatedItem] = []
-        for item in scored_items:
-            rating = 0
-            mean = max(item.score.focus_point_mean,
-                       item.score.wide_mean)
-            if mean >= 10:
-                if item.metadata.focus_data.face_tracking:
-                    rating += 1
-                if mean >= 40:
-                    rating += 1
-                if mean == max_mean:
-                    rating += 1
-                if mean >= max_mean * 0.95:
-                    rating += 1
-
-            rated.append(
-                RatedItem(
-                    metadata=item.metadata,
-                    score=item.score,
-                    rating=rating,
-                )
-            )
-
-        rated = sorted(rated,
-                       key=lambda item: (item.rating, max(
-                           item.score.focus_point_mean, item.score.wide_mean)),
-                       reverse=True)
-
-        for item in rated:
-            print(item.metadata.source_file, item.metadata.focus_data, item.score, item.rating,
-                  file=sys.stderr)
-
-        if True:
-            for item in rated:
-                write_metadata(item.metadata.source_file,
-                               rating=item.rating)
-
-        print("%.1f sec" % (time.perf_counter() - start_time), file=sys.stderr)
-
-        gc.collect()
+    _ = joblib.Parallel(n_jobs=-1)(
+        joblib.delayed(process_group)(list(group)) for group in groups)
 
 
 if __name__ == '__main__':
