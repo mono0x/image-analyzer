@@ -1,11 +1,11 @@
 from dataclasses import dataclass
 from datetime import date, datetime
-from functools import reduce
 from glob import glob
 from io import BytesIO
 from subprocess import PIPE
 from typing import Callable, Dict, Iterator, List, TypeVar
-from PIL import Image, ImageDraw
+from PIL import Image
+from pathlib import Path
 import cv2
 import gc
 import json
@@ -13,6 +13,7 @@ import numpy as np
 import rawpy
 import subprocess
 import sys
+import time
 
 
 pdaf_scale = 10
@@ -61,7 +62,7 @@ class ScoredItem:
 class RatedItem:
     metadata: ImageMetadata
     score: Score
-    rate: int
+    rating: int
 
 
 # https://github.com/musselwhizzle/Focus-Points/blob/master/focuspoints.lrdevplugin/SonyDelegates.lua
@@ -184,7 +185,7 @@ def build_metadata(item: Dict, file: str) -> ImageMetadata:
     create_date = datetime.strptime(
         item["CreateDate"]+item["OffsetTime"], "%Y:%m:%d %H:%M:%S%z")
     return ImageMetadata(
-        source_file=file,  # item["SourceFile"] is not corret in Windows
+        source_file=file,  # item["SourceFile"] is not correct in Windows
         file_name=item["FileName"],
         create_date=create_date,
         focus_data=extract_focus_data(item),
@@ -207,6 +208,31 @@ def load_metadata(paths: List[str]) -> Iterator[ImageMetadata]:
 
         for item in json.loads(proc.stdout):
             yield build_metadata(item, file)
+
+
+# https://exiftool.org/metafiles.html
+def write_metadata(path: str, rating: int):
+    raw_path = Path(path)
+    raw_suffix = raw_path.suffix
+    xmp_path = raw_path.with_suffix(".xmp")
+
+    if not xmp_path.is_file():
+        # Create xmp sidecar first.
+        subprocess.run(["exiftool",
+                        "-ext", raw_suffix,
+                        "-o", "%d%f.xmp",
+                        "-r", raw_path],
+                       check=True, encoding="utf-8")
+
+    # Write rating to xmp sidecar.
+    subprocess.run(["exiftool",
+                    "-overwrite_original_in_place",
+                    "-ext", raw_suffix,
+                    "-rating={}".format(rating),
+                    "-srcfile", "%d%f.xmp",
+                    "-srcfile", "@",
+                    raw_path],
+                   check=True, encoding="utf-8")
 
 
 T = TypeVar("T")
@@ -284,12 +310,13 @@ def main():
     groups = split_groups(groups, lambda d: group_by(d, similar_date))
     groups = split_groups(groups, lambda d: group_by(d, similar_histogram))
 
-    rated_groups = []
     for group in groups:
+        start_time = time.perf_counter()
+
         group = list(group)
         print([item.source_file for item in group], file=sys.stderr)
 
-        scored_items = []
+        scored_items: List[ScoredItem] = []
         for metadata in group:
             image_width = metadata.focus_data.image_width
             image_height = metadata.focus_data.image_height
@@ -348,41 +375,43 @@ def main():
         max_mean = max([max(item.score.wide_mean, item.score.focus_point_mean)
                        for item in scored_items])
 
-        rated = []
+        rated: List[RatedItem] = []
         for item in scored_items:
-            rate = 0
+            rating = 0
             mean = max(item.score.focus_point_mean,
                        item.score.wide_mean)
             if mean >= 10:
-                rate += 1
+                rating += 1
                 if mean >= 20:
-                    rate += 1
+                    rating += 1
                 if mean >= max_mean * 0.9:
-                    rate += 1
+                    rating += 1
 
             rated.append(
                 RatedItem(
                     metadata=item.metadata,
                     score=item.score,
-                    rate=rate,
+                    rating=rating,
                 )
             )
 
         rated = sorted(rated,
-                       key=lambda item: (item.rate, max(
+                       key=lambda item: (item.rating, max(
                            item.score.focus_point_mean, item.score.wide_mean)),
                        reverse=True)
 
-        rated_groups.append(rated)
-
         for item in rated:
-            print(item.metadata.source_file, item.score, item.rate,
+            print(item.metadata.source_file, item.score, item.rating,
                   file=sys.stderr)
 
-        gc.collect()
+        if True:
+            for item in rated:
+                write_metadata(item.metadata.source_file,
+                               rating=item.rating)
 
-    # for i, group in enumerate(rated_groups):
-    #    f
+        print(time.perf_counter() - start_time, "sec", file=sys.stderr)
+
+        gc.collect()
 
 
 if __name__ == '__main__':
