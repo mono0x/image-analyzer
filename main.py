@@ -409,7 +409,7 @@ def main():
                 write_metadata(item.metadata.source_file,
                                rating=item.rating)
 
-        print("%.1f sec".format(time.perf_counter() - start_time), file=sys.stderr)
+        print("%.1f sec" % (time.perf_counter() - start_time), file=sys.stderr)
 
         gc.collect()
 
