@@ -8,6 +8,7 @@ from PIL import Image
 from pathlib import Path
 import cv2
 import gc
+import joblib
 import json
 import numpy as np
 import rawpy
@@ -303,6 +304,60 @@ def calc_mean(image: np.ndarray, x: int, y: int, w: int, h: int) -> float:
     return image[y_min:y_max, x_min:x_max].mean()
 
 
+def process_image(metadata: ImageMetadata) -> ScoredItem:
+    image_width = metadata.focus_data.image_width
+    image_height = metadata.focus_data.image_height
+    points = metadata.focus_data.focus_points
+
+    filtered_image = high_pass_filter(metadata)
+    filtered_height, filtered_width = filtered_image.shape
+    x_scale = filtered_width / image_width
+    y_scale = filtered_height / image_height
+
+    point_mean = max([
+        calc_mean(
+            filtered_image,
+            x=int(p.x*x_scale),
+            y=int(p.y*y_scale),
+            w=int(p.width*x_scale),
+            h=int(p.height*y_scale),
+        ) for p in points
+    ])
+
+    wide_mean = calc_mean(
+        filtered_image,
+        x=int(sum([p.x for p in points])/len(points)*x_scale),
+        y=int(sum([p.y for p in points])/len(points)*y_scale),
+        w=int(filtered_width/8),
+        h=int(filtered_height/8),
+    )
+
+    if False:
+        thumb_image = cv2.cvtColor(
+            extract_thumbnail(metadata), cv2.COLOR_BGR2RGB)
+        thumb_height, thumb_width, _ = thumb_image.shape
+
+        filtered_small_image = cv2.resize(
+            filtered_image, dsize=(thumb_width, thumb_height))
+        filtered_small_image = filtered_small_image.clip(
+            0, 255).astype(np.uint8)
+        filtered_small_image = cv2.cvtColor(
+            filtered_small_image, cv2.COLOR_GRAY2RGB)
+
+        cv2.imwrite(metadata.file_name+".thumb.jpg",
+                    plot_focus_points(thumb_image, metadata))
+        cv2.imwrite(metadata.file_name+".filtered.jpg",
+                    plot_focus_points(filtered_small_image, metadata))
+
+    return ScoredItem(
+        metadata=metadata,
+        score=Score(
+            focus_point_mean=point_mean,
+            wide_mean=wide_mean,
+        ),
+    )
+
+
 def main():
     data = load_metadata(sys.argv[1:])
 
@@ -316,61 +371,8 @@ def main():
         group = list(group)
         print([item.source_file for item in group], file=sys.stderr)
 
-        scored_items: List[ScoredItem] = []
-        for metadata in group:
-            image_width = metadata.focus_data.image_width
-            image_height = metadata.focus_data.image_height
-            points = metadata.focus_data.focus_points
-
-            filtered_image = high_pass_filter(metadata)
-            filtered_height, filtered_width = filtered_image.shape
-            x_scale = filtered_width / image_width
-            y_scale = filtered_height / image_height
-
-            point_mean = max([
-                calc_mean(
-                    filtered_image,
-                    x=int(p.x*x_scale),
-                    y=int(p.y*y_scale),
-                    w=int(p.width*x_scale),
-                    h=int(p.height*y_scale),
-                ) for p in points
-            ])
-
-            wide_mean = calc_mean(
-                filtered_image,
-                x=int(sum([p.x for p in points])/len(points)*x_scale),
-                y=int(sum([p.y for p in points])/len(points)*y_scale),
-                w=int(filtered_width/8),
-                h=int(filtered_height/8),
-            )
-
-            scored_items.append(
-                ScoredItem(
-                    metadata=metadata,
-                    score=Score(
-                        focus_point_mean=point_mean,
-                        wide_mean=wide_mean,
-                    ),
-                )
-            )
-
-            if False:
-                thumb_image = cv2.cvtColor(
-                    extract_thumbnail(metadata), cv2.COLOR_BGR2RGB)
-                thumb_height, thumb_width, _ = thumb_image.shape
-
-                filtered_small_image = cv2.resize(
-                    filtered_image, dsize=(thumb_width, thumb_height))
-                filtered_small_image = filtered_small_image.clip(
-                    0, 255).astype(np.uint8)
-                filtered_small_image = cv2.cvtColor(
-                    filtered_small_image, cv2.COLOR_GRAY2RGB)
-
-                cv2.imwrite(metadata.file_name+".thumb.jpg",
-                            plot_focus_points(thumb_image, metadata))
-                cv2.imwrite(metadata.file_name+".filtered.jpg",
-                            plot_focus_points(filtered_small_image, metadata))
+        scored_items: List[ScoredItem] = joblib.Parallel(n_jobs=-1)(
+            joblib.delayed(process_image)(metadata) for metadata in group)
 
         max_mean = max([max(item.score.wide_mean, item.score.focus_point_mean)
                        for item in scored_items])
@@ -382,7 +384,9 @@ def main():
                        item.score.wide_mean)
             if mean >= 10:
                 rating += 1
-                if mean >= 20:
+                if mean >= 25:
+                    rating += 1
+                if mean >= 40:
                     rating += 1
                 if mean >= max_mean * 0.9:
                     rating += 1
