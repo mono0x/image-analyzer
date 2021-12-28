@@ -224,6 +224,9 @@ def write_metadata(path: str, rating: int):
     raw_path = Path(path)
     raw_suffix = raw_path.suffix
     xmp_path = raw_path.with_suffix(".xmp")
+    xmp_exiftool_tmp_path = raw_path.with_suffix(".xmp_exiftool_tmp")
+
+    xmp_exiftool_tmp_path.unlink(missing_ok=True)
 
     if not xmp_path.is_file():
         # Create xmp sidecar first.
