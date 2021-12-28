@@ -400,9 +400,9 @@ def main():
             if mean >= 10:
                 if item.metadata.focus_data.face_tracking:
                     rating += 1
-                if mean >= 20:
-                    rating += 1
                 if mean >= 40:
+                    rating += 1
+                if mean == max_mean:
                     rating += 1
                 if mean >= max_mean * 0.95:
                     rating += 1
