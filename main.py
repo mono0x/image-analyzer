@@ -316,15 +316,16 @@ def calc_mean(image: np.ndarray, x: int, y: int, w: int, h: int) -> float:
     return image[y_min:y_max, x_min:x_max].mean()
 
 
-def process_image(metadata: ImageMetadata) -> ScoredItem:
+def process_image(metadata: ImageMetadata, group_focus_data: List[FocusData]) -> ScoredItem:
     image_width = metadata.focus_data.image_width
     image_height = metadata.focus_data.image_height
-    points = metadata.focus_data.focus_points
 
     filtered_image = high_pass_filter(metadata)
     filtered_height, filtered_width = filtered_image.shape
     x_scale = filtered_width / image_width
     y_scale = filtered_height / image_height
+
+    focus_points = sum([f.focus_points for f in group_focus_data], [])
 
     point_mean = max([
         calc_mean(
@@ -333,13 +334,13 @@ def process_image(metadata: ImageMetadata) -> ScoredItem:
             y=int(p.y*y_scale),
             w=int(p.width*x_scale),
             h=int(p.height*y_scale),
-        ) for p in points
+        ) for p in focus_points
     ])
 
     wide_mean = calc_mean(
         filtered_image,
-        x=int(sum([p.x for p in points])/len(points)*x_scale),
-        y=int(sum([p.y for p in points])/len(points)*y_scale),
+        x=int(sum([p.x for p in focus_points])/len(focus_points)*x_scale),
+        y=int(sum([p.y for p in focus_points])/len(focus_points)*y_scale),
         w=int(filtered_width/8),
         h=int(filtered_height/8),
     )
@@ -383,8 +384,10 @@ def main():
         group = list(group)
         print([item.source_file for item in group], file=sys.stderr)
 
+        group_focus_data = [m.focus_data for m in group]
+
         scored_items: List[ScoredItem] = joblib.Parallel(n_jobs=-1)(
-            joblib.delayed(process_image)(metadata) for metadata in group)
+            joblib.delayed(process_image)(metadata, group_focus_data) for metadata in group)
 
         max_mean = max([max(item.score.wide_mean, item.score.focus_point_mean)
                        for item in scored_items])
