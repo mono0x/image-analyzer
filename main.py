@@ -167,6 +167,7 @@ def pad_for_dft(image: np.ndarray) -> np.ndarray:
 def high_pass_filter(metadata: ImageMetadata, size: int = 120) -> np.ndarray:
     image = extract_rgb(metadata)
     gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    # gray_image = cv2.resize(gray_image, (2400, 1600), cv2.INTER_AREA)
     gray_image = cv2.fastNlMeansDenoising(
         gray_image, h=10, templateWindowSize=7, searchWindowSize=21)
     original_h, original_w = gray_image.shape
