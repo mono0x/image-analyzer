@@ -30,6 +30,7 @@ class FocusPoint:
     y: int
     width: int
     height: int
+    face_tracking: bool
 
 
 @dataclass
@@ -37,6 +38,7 @@ class FocusData:
     image_width: int
     image_height: int
     focus_points: List[FocusPoint]
+    face_tracking: bool
 
 
 @dataclass
@@ -67,6 +69,7 @@ class RatedItem:
 
 
 # https://github.com/musselwhizzle/Focus-Points/blob/master/focuspoints.lrdevplugin/SonyDelegates.lua
+# https://github.com/SK-Hardwired/s_afv/blob/s-afv-python-27/afv.py
 def extract_focus_data(item: Dict) -> FocusData:
     focus_point = item["FocusLocation"].split(" ")
     image_width = int(focus_point[0])
@@ -74,12 +77,15 @@ def extract_focus_data(item: Dict) -> FocusData:
     x = int(focus_point[2])
     y = int(focus_point[3])
 
+    face_tracking = item.get("AFTracking", None) == "Face tracking"
+
     points = [
         FocusPoint(
             x=x,
             y=y,
             width=focus_location_size,
             height=focus_location_size,
+            face_tracking=face_tracking,
         ),
     ]
 
@@ -106,6 +112,7 @@ def extract_focus_data(item: Dict) -> FocusData:
                     y=pdaf_y,
                     width=pdaf_point_size,
                     height=pdaf_point_size,
+                    face_tracking=False,
                 )
             )
 
@@ -113,6 +120,7 @@ def extract_focus_data(item: Dict) -> FocusData:
         image_width=image_width,
         image_height=image_height,
         focus_points=points,
+        face_tracking=face_tracking,
     )
 
 
@@ -285,10 +293,11 @@ def plot_focus_points(image: np.ndarray, metadata: ImageMetadata) -> np.ndarray:
         y = point.y
         pw = point.width / 2
         ph = point.height / 2
+        color = (0, 255, 0) if point.face_tracking else (0, 255, 255)
         cv2.rectangle(image,
                       (int((x-pw)*x_scale), int((y-ph)*x_scale)),
                       (int((x+pw)*x_scale), int((y+ph)*y_scale)),
-                      color=(0, 0, 255), thickness=3)
+                      color=color, thickness=3)
 
     return image
 
@@ -383,12 +392,13 @@ def main():
             mean = max(item.score.focus_point_mean,
                        item.score.wide_mean)
             if mean >= 10:
-                rating += 1
-                if mean >= 25:
+                if item.metadata.focus_data.face_tracking:
+                    rating += 1
+                if mean >= 20:
                     rating += 1
                 if mean >= 40:
                     rating += 1
-                if mean >= max_mean * 0.9:
+                if mean >= max_mean * 0.95:
                     rating += 1
 
             rated.append(
@@ -405,7 +415,7 @@ def main():
                        reverse=True)
 
         for item in rated:
-            print(item.metadata.source_file, item.score, item.rating,
+            print(item.metadata.source_file, item.metadata.focus_data, item.score, item.rating,
                   file=sys.stderr)
 
         if True:
